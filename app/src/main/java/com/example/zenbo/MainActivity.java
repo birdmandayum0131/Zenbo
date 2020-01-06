@@ -30,15 +30,17 @@ import java.util.List;
 public class MainActivity extends RobotActivity {
     private Button button;
     public static int count = 0;
-    public static final int TURN_AROUND = 5278, CLEAR_LIST = 52778, TURN_BACK = 55278;
-    private static final int MOVE_AROUND = 52278;
-    public static final int FOWARD = 52788, TURN_FOWARD = 52278;
+    public static final int TURN_AROUND = 5278, TURN_AROUND_BACK = 52778, TURN_BACK = 55278;
+    private static final int CENTIMETERS = 52278;
+    public static final int HALF_METER = 52788, TURN_FOWARD = 52278;
     public static final int CHECK_SONAR = 527888;
-    private int remainDistance = 0;
+    private int remainAngle = 0;
     private float midSonar = 0.0f;
+    private float leftSonar = 0.0f;
+    private float rightSonar = 0.0f;
     private static int command = -1;
     private static RobotCmdState cmdState;
-    private ArrayList<Float> sonarList = new ArrayList<Float>();
+    private ArrayList<Triple> sonarList = new ArrayList<Triple>();
     private ArrayList<Float> sonarList2 = new ArrayList<Float>();
     public static boolean succeed = false;
     public static TextView[] textView = new TextView[3];
@@ -162,6 +164,8 @@ public class MainActivity extends RobotActivity {
             textView[0].setText("Sonar " + "left" + " : " + String.valueOf(event.values[0]));
             textView[1].setText("Sonar " + "right" + " : " + String.valueOf(event.values[1]));
             textView[2].setText("Sonar " + "mid" + " : " + String.valueOf(event.values[2]));
+            leftSonar = event.values[1];
+            rightSonar = event.values[0];
             midSonar = event.values[2];
             //sonarList.add(new Float(event.values[2]));
             //sonarList2.add(new Float(event.values[1]));
@@ -177,15 +181,31 @@ public class MainActivity extends RobotActivity {
     private class ButtonHandler implements View.OnClickListener {
         @Override
         public void onClick(View v) {
-            robotAPI.motion.stopMoving();
+            robotAPI.cancelCommandAll();
             succeed = true;
-            moveHandler.sendEmptyMessage(FOWARD);
+            //robotAPI.motion.moveBody(0.5f, 0.5f, 0, MotionControl.SpeedLevel.Body.L1);
+            moveHandler.sendEmptyMessage(CHECK_SONAR);
         }
     }
+
+    private class Triple {
+        public float left;
+        public float middle;
+        public float right;
+
+        Triple(float l, float m, float r) {
+            left = l;
+            middle = m;
+            right = r;
+        }
+    }
+
 
     private class MoveHandler extends Handler {
         Message message;
         Bundle bundle;
+        int distanceY = 20;
+
 
         public MoveHandler(Looper looper) {
             super(looper);
@@ -195,56 +215,104 @@ public class MainActivity extends RobotActivity {
         public void handleMessage(Message msg) {
             super.handleMessage(msg);
             switch (msg.what) {
-                case CLEAR_LIST:
-                    sonarList = new ArrayList<Float>();
+                case TURN_AROUND_BACK:
+                    if (!succeed) {
+                        moveHandler.sendEmptyMessageDelayed(TURN_AROUND_BACK, 100);
+                        break;
+                    }
+                    move_around(distanceY*-1);
                     moveHandler.sendEmptyMessage(CHECK_SONAR);
 
                     break;
-                case FOWARD:
-                    robotAPI.motion.moveBody(20f, 0.0f, 0, MotionControl.SpeedLevel.Body.L1);
-                    moveHandler.sendEmptyMessage(CLEAR_LIST);
+                case HALF_METER:
+                    move_half_meter();
+                    moveHandler.sendEmptyMessage(CHECK_SONAR);
                     break;
                 case TURN_AROUND:
-                    if (cmdState == RobotCmdState.FAILED || cmdState == RobotCmdState.SUCCEED) {
-                        robotAPI.motion.moveBody(0.0f, 0.0f, 45, MotionControl.SpeedLevel.Body.L1);
-                        sonarList = new ArrayList<Float>();
-                        succeed = false;
-                        //sonarList2.clear();
-                        moveHandler.sendEmptyMessageDelayed(CHECK_SONAR, 500);
-                    } else {
-                        moveHandler.sendEmptyMessageDelayed(TURN_AROUND, 100);
-                    }
+                   move_around(distanceY);
+                    moveHandler.sendEmptyMessage(TURN_AROUND_BACK);
                     break;
-                case MOVE_AROUND:
+                case CENTIMETERS:
+                    move_10_centimeters();
+                    moveHandler.sendEmptyMessage(CHECK_SONAR);
                     break;
                 case CHECK_SONAR:
                     if (!succeed) {
                         moveHandler.sendEmptyMessageDelayed(CHECK_SONAR, 100);
                         break;
                     }
-                    if (sonarList.size() >50)
-                        sonarList = new ArrayList<Float>();
-                    sonarList.add(new Float(midSonar));
-                    if (sonarList.size() < 8) {
-                        moveHandler.sendEmptyMessageDelayed(CHECK_SONAR, 100);
-                        break;
-                    } else {
-                        int count = 0;
-                        for (int i = sonarList.size() - 6; i < sonarList.size(); i++)
-                            if (sonarList.get(i) > 0.25) count++;
-                        if (count > 2) {
-                            if (command == RobotCommand.MOTION_MOVE_BODY.getValue() && cmdState == RobotCmdState.ACTIVE)
-                                moveHandler.sendEmptyMessageDelayed(CHECK_SONAR, 100);
-                            moveHandler.sendEmptyMessage(FOWARD);
-                        } else {
-                            robotAPI.cancelCommandAll();
-                            moveHandler.sendEmptyMessage(TURN_AROUND);
-                        }
-                    }
 
+                    sonarList = new ArrayList<Triple>();
+//                    if (sonarList.size() > 50)
+//                        sonarList = new ArrayList<Triple>();
+                    while (sonarList.size() < 8) {
+                        sonarList.add(new Triple(leftSonar, midSonar, rightSonar));
+                        try {
+                            Thread.sleep(200);
+                        } catch (InterruptedException e) {
+                            e.printStackTrace();
+                        }
+//                        moveHandler.sendEmptyMessageDelayed(CHECK_SONAR, 100);
+                    }
+                    int half_meter_count = 0;
+                    int centimeters_count = 0;
+                    int turnAroundCount = 0;
+                    int leftSonarCount = 0;
+                    int rightSonarCount = 0;
+                    for (int i = sonarList.size() - 7; i < sonarList.size(); i++) {
+                        if (sonarList.get(i).middle > 1.1) half_meter_count++;
+                        if (sonarList.get(i).middle > 0.55 && sonarList.get(i).middle <= 1.1)
+                            centimeters_count++;
+                        if (sonarList.get(i).middle <= 0.55) turnAroundCount++;
+                        if (sonarList.get(i).left <= 0.6) leftSonarCount++;
+                        if (sonarList.get(i).right <= 0.6) rightSonarCount++;
+                    }
+                    if (half_meter_count > 3) {
+                        moveHandler.sendEmptyMessage(HALF_METER);
+                    } else if (centimeters_count > 3) {
+                        moveHandler.sendEmptyMessage(CENTIMETERS);
+                    } else if (turnAroundCount > 3) {
+                        if (leftSonarCount > 3 && rightSonarCount <= 3)
+                            distanceY = -20;
+                        else if (leftSonarCount <= 3 && rightSonarCount > 3)
+                            distanceY = 20;
+                        else if (leftSonarCount <= 3 && rightSonarCount <= 3)
+                            distanceY = (leftSonarCount < rightSonarCount) ? 30 : -30;
+                        else {
+                            //print.setText("FK");
+                            break;
+                        }
+                        moveHandler.sendEmptyMessage(TURN_AROUND);
+                    }
                     break;
             }
+
+            //break;
         }
     }
 
+    private void move_half_meter() {
+        robotAPI.cancelCommandAll();
+        succeed = false;
+
+        robotAPI.motion.moveBody(0.5f, 0.0f, 0, MotionControl.SpeedLevel.Body.L1);
+        return;
+    }
+
+    private void move_10_centimeters() {
+        robotAPI.cancelCommandAll();
+        succeed = false;
+        robotAPI.motion.moveBody(0.1f, 0.0f, 0, MotionControl.SpeedLevel.Body.L1);
+        return;
+    }
+
+    private void move_around(int centimetersY) {
+        robotAPI.cancelCommandAll();
+        succeed = false;
+        robotAPI.motion.moveBody(0.8f, centimetersY/100.0f, 0, MotionControl.SpeedLevel.Body.L1);
+        return;
+    }
+
 }
+
+
